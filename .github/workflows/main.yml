@@ -129,6 +129,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: kakeibo123
           ANDROID_KEY_PASSWORD: kakeibo123
         run: |
+          printf "%s\n%s\n" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_PASSWORD" | \
           bubblewrap build --skipPwaValidation \
             --password="$ANDROID_KEYSTORE_PASSWORD" \
             --keyPassword="$ANDROID_KEY_PASSWORD"
@@ -144,3 +145,4 @@ jobs:
           name: Kakeibo-APK
           path: out/Kakeibo.apk
           retention-days: 90
+
