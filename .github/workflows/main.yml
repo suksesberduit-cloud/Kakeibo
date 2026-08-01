@@ -1,4 +1,4 @@
-name: Deploy PWA & Build APK
+name: Deploy PWA and Build APK
 
 on:
   push:
@@ -11,13 +11,13 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: false
 
 jobs:
   # ---------------------------------------------------------------------
-  # 1) Deploy the PWA (index.html, manifest, sw.js, css/js/icons) to
-  #    GitHub Pages. Bubblewrap needs a *live* HTTPS URL to package.
+  # 1) Unzip kakeibo-pwa.zip (pushed as-is to repo root) and deploy the
+  #    extracted PWA to GitHub Pages. Bubblewrap needs a live HTTPS URL.
   # ---------------------------------------------------------------------
   deploy-pages:
     runs-on: ubuntu-latest
@@ -25,4 +25,122 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     outputs:
-      page_url: ${{ steps.deployment.outputs.
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract kakeibo-pwa.zip
+        run: |
+          rm -rf site _extracted
+          unzip -o kakeibo-pwa.zip -d _extracted
+          SRC_DIR=$(find _extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          mkdir -p site
+          cp -r "$SRC_DIR"/. site/
+          ls -la site
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload PWA artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ---------------------------------------------------------------------
+  # 2) Package the deployed PWA into an installable Android APK using
+  #    Google's Bubblewrap (Trusted Web Activity wrapper).
+  # ---------------------------------------------------------------------
+  build-apk:
+    needs: deploy-pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract kakeibo-pwa.zip
+        run: |
+          rm -rf site _extracted
+          unzip -o kakeibo-pwa.zip -d _extracted
+          SRC_DIR=$(find _extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          mkdir -p site
+          cp -r "$SRC_DIR"/. site/
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
+
+      - name: Derive host and start URL from Pages deployment
+        id: vars
+        run: |
+          PAGE_URL="${{ needs.deploy-pages.outputs.page_url }}"
+          PAGE_URL="${PAGE_URL%/}/"
+          HOST=$(echo "$PAGE_URL" | sed -E 's#https?://([^/]+)/.*#\1#')
+          PATH_PART=$(echo "$PAGE_URL" | sed -E 's#https?://[^/]+(/.*)#\1#')
+          echo "page_url=$PAGE_URL" >> "$GITHUB_OUTPUT"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "path_part=$PATH_PART" >> "$GITHUB_OUTPUT"
+
+      - name: Generate signing keystore (debug/sideload key)
+        working-directory: site
+        run: |
+          keytool -genkeypair -v \
+            -keystore android.keystore \
+            -alias kakeibo \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass kakeibo123 -keypass kakeibo123 \
+            -dname "CN=Kakeibo, OU=Personal, O=Kakeibo, L=Jakarta, S=Jakarta, C=ID"
+
+      - name: Render twa-manifest.json
+        working-directory: site
+        run: |
+          PAGE_URL="${{ steps.vars.outputs.page_url }}"
+          HOST="${{ steps.vars.outputs.host }}"
+          PATH_PART="${{ steps.vars.outputs.path_part }}"
+          sed \
+            -e "s#__HOST__#${HOST}#g" \
+            -e "s#__START_URL__#${PATH_PART}index.html#g" \
+            -e "s#__WEB_MANIFEST_URL__#${PAGE_URL}manifest.json#g" \
+            -e "s#__ICON_URL__#${PAGE_URL}icons/icon-512.png#g" \
+            -e "s#__FULL_SCOPE_URL__#${PAGE_URL}#g" \
+            twa-manifest.template.json > twa-manifest.json
+          cat twa-manifest.json
+
+      - name: Build APK with Bubblewrap
+        working-directory: site
+        env:
+          ANDROID_KEYSTORE_PASSWORD: kakeibo123
+          ANDROID_KEY_PASSWORD: kakeibo123
+        run: |
+          bubblewrap build --skipPwaValidation \
+            --password="$ANDROID_KEYSTORE_PASSWORD" \
+            --keyPassword="$ANDROID_KEY_PASSWORD"
+
+      - name: Collect output APK
+        run: |
+          mkdir -p out
+          cp site/app-release-signed.apk out/Kakeibo.apk || cp site/*.apk out/Kakeibo.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kakeibo-APK
+          path: out/Kakeibo.apk
+          retention-days: 90
