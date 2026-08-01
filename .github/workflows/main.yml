@@ -134,16 +134,19 @@ jobs:
             twa-manifest.template.json > twa-manifest.json
           cat twa-manifest.json
 
+      - name: Regenerate Android project (non-interactive)
+        working-directory: site
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: kakeibo123
+          BUBBLEWRAP_KEY_PASSWORD: kakeibo123
+        run: bubblewrap update --skipVersionUpgrade
+
       - name: Build APK with Bubblewrap
         working-directory: site
         env:
-          ANDROID_KEYSTORE_PASSWORD: kakeibo123
-          ANDROID_KEY_PASSWORD: kakeibo123
-        run: |
-          printf "y\ny\n%s\n%s\n" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_PASSWORD" | \
-          bubblewrap build --skipPwaValidation \
-            --password="$ANDROID_KEYSTORE_PASSWORD" \
-            --keyPassword="$ANDROID_KEY_PASSWORD"
+          BUBBLEWRAP_KEYSTORE_PASSWORD: kakeibo123
+          BUBBLEWRAP_KEY_PASSWORD: kakeibo123
+        run: bubblewrap build --skipPwaValidation
 
       - name: Collect output APK
         run: |
