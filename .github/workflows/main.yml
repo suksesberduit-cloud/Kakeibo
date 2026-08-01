@@ -87,6 +87,17 @@ jobs:
       - name: Install Bubblewrap CLI
         run: npm install -g @bubblewrap/cli
 
+      - name: Pre-configure Bubblewrap (skip interactive JDK/SDK prompts)
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          cat > "$HOME/.bubblewrap/config.json" <<EOF
+          {
+            "jdkPath": "${JAVA_HOME}",
+            "androidSdkPath": "${ANDROID_HOME}"
+          }
+          EOF
+          cat "$HOME/.bubblewrap/config.json"
+
       - name: Derive host and start URL from Pages deployment
         id: vars
         run: |
@@ -129,7 +140,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: kakeibo123
           ANDROID_KEY_PASSWORD: kakeibo123
         run: |
-          printf "%s\n%s\n" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_PASSWORD" | \
+          printf "y\ny\n%s\n%s\n" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_PASSWORD" | \
           bubblewrap build --skipPwaValidation \
             --password="$ANDROID_KEYSTORE_PASSWORD" \
             --keyPassword="$ANDROID_KEY_PASSWORD"
@@ -145,4 +156,5 @@ jobs:
           name: Kakeibo-APK
           path: out/Kakeibo.apk
           retention-days: 90
+
 
