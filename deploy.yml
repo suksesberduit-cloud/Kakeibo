@@ -1,0 +1,184 @@
+name: Deploy PWA and Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------
+  # 1) Unzip kakeibo-pwa.zip (pushed as-is to repo root) and deploy the
+  #    extracted PWA to GitHub Pages. Bubblewrap needs a live HTTPS URL.
+  # ---------------------------------------------------------------------
+  deploy-pages:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract kakeibo-pwa.zip
+        run: |
+          rm -rf site _extracted
+          unzip -o kakeibo-pwa.zip -d _extracted
+          SRC_DIR=$(find _extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          mkdir -p site
+          cp -r "$SRC_DIR"/. site/
+          ls -la site
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload PWA artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ---------------------------------------------------------------------
+  # 2) Package the deployed PWA into an installable Android APK using
+  #    Google's Bubblewrap (Trusted Web Activity wrapper).
+  # ---------------------------------------------------------------------
+  build-apk:
+    needs: deploy-pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract kakeibo-pwa.zip
+        run: |
+          rm -rf site _extracted
+          unzip -o kakeibo-pwa.zip -d _extracted
+          SRC_DIR=$(find _extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          mkdir -p site
+          cp -r "$SRC_DIR"/. site/
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Install SDK platform 35 (Play Store target API)
+        run: |
+          ok=0
+          for i in 1 2 3; do
+            if sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" < <(yes); then
+              ok=1
+              break
+            fi
+            echo "sdkmanager gagal (percobaan $i), coba lagi..."
+            sleep 10
+          done
+          [ "$ok" = "1" ] || exit 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
+
+      - name: Pre-configure Bubblewrap (skip interactive JDK/SDK prompts)
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          cat > "$HOME/.bubblewrap/config.json" <<EOF
+          {
+            "jdkPath": "${JAVA_HOME}",
+            "androidSdkPath": "${ANDROID_HOME}"
+          }
+          EOF
+          cat "$HOME/.bubblewrap/config.json"
+
+      - name: Derive host and start URL
+        id: vars
+        run: |
+          HOST="suksesberduit-cloud.github.io"
+          PATH_PART="/Kakeibo/"
+          PAGE_URL="https://${HOST}${PATH_PART}"
+          echo "page_url=$PAGE_URL" >> "$GITHUB_OUTPUT"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "path_part=$PATH_PART" >> "$GITHUB_OUTPUT"
+
+      - name: Restore persistent signing keystore
+        working-directory: site
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android.keystore
+
+      - name: Render twa-manifest.json
+        working-directory: site
+        run: |
+          PAGE_URL="${{ steps.vars.outputs.page_url }}"
+          HOST="${{ steps.vars.outputs.host }}"
+          PATH_PART="${{ steps.vars.outputs.path_part }}"
+          sed \
+            -e "s#__HOST__#${HOST}#g" \
+            -e "s#__START_URL__#${PATH_PART}index.html#g" \
+            -e "s#__WEB_MANIFEST_URL__#${PAGE_URL}manifest.json#g" \
+            -e "s#__ICON_URL__#${PAGE_URL}icons/icon-512.png#g" \
+            -e "s#__FULL_SCOPE_URL__#${PAGE_URL}#g" \
+            twa-manifest.template.json > twa-manifest.json
+          cat twa-manifest.json
+
+      - name: Regenerate Android project (non-interactive)
+        working-directory: site
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: kakeibo123
+          BUBBLEWRAP_KEY_PASSWORD: kakeibo123
+        run: bubblewrap update --skipVersionUpgrade
+
+      - name: Ensure compile/target SDK meets Play Store requirement
+        working-directory: site
+        run: |
+          sed -i -E 's/compileSdkVersion [0-9]+/compileSdkVersion 35/' app/build.gradle
+          sed -i -E 's/targetSdkVersion [0-9]+/targetSdkVersion 35/' app/build.gradle
+          grep -E "compileSdkVersion|targetSdkVersion" app/build.gradle
+
+      - name: Build APK and AAB with Bubblewrap
+        working-directory: site
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: kakeibo123
+          BUBBLEWRAP_KEY_PASSWORD: kakeibo123
+        run: bubblewrap build --skipPwaValidation
+
+      - name: Collect output APK and AAB
+        run: |
+          mkdir -p out
+          cp site/app-release-signed.apk out/Kakeibo.apk || cp site/*.apk out/Kakeibo.apk
+          cp site/app-release-bundle.aab out/Kakeibo.aab || cp site/*.aab out/Kakeibo.aab
+
+      - name: Upload APK artifact (untuk sideload/testing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kakeibo-APK
+          path: out/Kakeibo.apk
+          retention-days: 90
+
+      - name: Upload AAB artifact (untuk submit ke Play Store)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kakeibo-AAB
+          path: out/Kakeibo.aab
+          retention-days: 90
