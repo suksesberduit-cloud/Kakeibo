@@ -137,13 +137,23 @@ jobs:
         working-directory: site
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android.keystore
 
-      - name: Verifikasi keystore (diagnostik)
+      - name: Verifikasi dan normalkan format keystore
         working-directory: site
         run: |
           echo "Ukuran file: $(wc -c < android.keystore) byte (seharusnya 2730)"
           keytool -list -v -keystore android.keystore -alias kakeibo -storepass kakeibo123 2>&1 | grep -E "Keystore type|Alias name|SHA256:|rror|xception" || echo "keytool GAGAL membaca keystore"
           echo "SHA256 yang diharapkan: 1C:D6:05:B3:EC:3B:2C:B7:83:F7:36:BE:DA:26:F8:1D:59:4E:B1:1D:C8:6D:08:EC:A0:23:31:A8:95:07:B5:E8"
           java -version 2>&1 | head -1
+          echo "JAVA_HOME=$JAVA_HOME"
+          # Ubah ke format PKCS12 yang kompatibel luas (identitas/sidik jari tidak berubah)
+          keytool -importkeystore \
+            -srckeystore android.keystore -srcstorepass kakeibo123 -srcalias kakeibo \
+            -destkeystore android-legacy.keystore -deststoretype PKCS12 \
+            -deststorepass kakeibo123 -destkeypass kakeibo123 -destalias kakeibo \
+            -J-Dkeystore.pkcs12.legacy -noprompt
+          mv android-legacy.keystore android.keystore
+          echo "Sidik jari setelah konversi:"
+          keytool -list -v -keystore android.keystore -storepass kakeibo123 | grep "SHA256:"
 
       - name: Render twa-manifest.json
         working-directory: site
