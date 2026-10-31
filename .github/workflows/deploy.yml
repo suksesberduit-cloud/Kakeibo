@@ -162,6 +162,8 @@ jobs:
       - name: Ensure compile/target SDK meets Play Store requirement
         working-directory: site
         run: |
+          cp app/build.gradle app/build.gradle.orig
+          grep -E "compileSdk|targetSdk" app/build.gradle.orig || true
           sed -i -E 's/compileSdkVersion [0-9]+/compileSdkVersion 35/' app/build.gradle
           sed -i -E 's/targetSdkVersion [0-9]+/targetSdkVersion 35/' app/build.gradle
           grep -E "compileSdkVersion|targetSdkVersion" app/build.gradle
@@ -171,7 +173,27 @@ jobs:
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: kakeibo123
           BUBBLEWRAP_KEY_PASSWORD: kakeibo123
-        run: bubblewrap build --skipPwaValidation
+        run: |
+          set +e
+          bubblewrap build --skipPwaValidation 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "=== RINGKASAN ERROR (percobaan 1, dengan patch SDK 35) ==="
+            grep -n -A15 "What went wrong" build.log | head -60
+            if [ -f app/build.gradle.orig ]; then
+              echo "=== COBA ULANG tanpa patch compileSdk/targetSdk ==="
+              cp app/build.gradle.orig app/build.gradle
+              bubblewrap build --skipPwaValidation 2>&1 | tee build2.log
+              status=${PIPESTATUS[0]}
+              if [ "$status" -ne 0 ]; then
+                echo "=== RINGKASAN ERROR (percobaan 2, tanpa patch) ==="
+                grep -n -A15 "What went wrong" build2.log | head -60
+              else
+                echo "::warning::Build lolos hanya tanpa patch SDK 35. Cek target API sebelum submit ke Play Store."
+              fi
+            fi
+          fi
+          exit $status
 
       - name: Collect output APK and AAB
         run: |
