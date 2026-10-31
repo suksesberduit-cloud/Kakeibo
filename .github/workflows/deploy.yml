@@ -94,6 +94,16 @@ jobs:
           done
           [ "$ok" = "1" ] || exit 1
 
+      - name: Prepare SDK layout for Bubblewrap (tools/ folder)
+        run: |
+          CT_DIR="$(dirname "$(dirname "$(readlink -f "$(command -v sdkmanager)")")")"
+          echo "cmdline-tools di: $CT_DIR"
+          if [ ! -e "$ANDROID_HOME/tools" ]; then
+            ln -s "$CT_DIR" "$ANDROID_HOME/tools"
+          fi
+          ls "$ANDROID_HOME/tools/bin"
+          sdkmanager "build-tools;36.1.0" < <(yes) || echo "build-tools 36.1.0 tidak terpasang, lanjut"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
