@@ -149,7 +149,9 @@ jobs:
             -e "s#__WEB_MANIFEST_URL__#${PAGE_URL}manifest.json#g" \
             -e "s#__ICON_URL__#${PAGE_URL}icons/icon-512.png#g" \
             -e "s#__FULL_SCOPE_URL__#${PAGE_URL}#g" \
+            -E -e 's#"minSdkVersion": *[0-9]+#"minSdkVersion": 24#' \
             twa-manifest.template.json > twa-manifest.json
+          grep minSdkVersion twa-manifest.json
           cat twa-manifest.json
 
       - name: Regenerate Android project (non-interactive)
